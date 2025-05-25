@@ -841,4 +841,104 @@ mod tests {
 
         assert!(matches!(result, Err(GraphError::CycleDetected)));
     }
+
+    #[tokio::test]
+    async fn test_simplified_context_api() {
+        use crate::ContextExt;
+
+        #[derive(Debug)]
+        struct SimplifiedApiTask;
+
+        #[async_trait::async_trait]
+        impl Task for SimplifiedApiTask {
+            async fn run(&self, context: Context) -> Result<(), GraphError> {
+                // Test basic set and get
+                context.set("string_value", "hello world".to_string()).await;
+                context.set("int_value", 42i32).await;
+                context.set("bool_value", true).await;
+                context.set("vec_value", vec![1, 2, 3]).await;
+
+                // Test get methods
+                let string_val = context.get::<String>("string_value").await;
+                assert_eq!(string_val, Some("hello world".to_string()));
+
+                let int_val = context.get::<i32>("int_value").await;
+                assert_eq!(int_val, Some(42));
+
+                // Test get_or_default
+                let default_val = context.get_or_default::<i32>("nonexistent").await;
+                assert_eq!(default_val, 0);
+
+                // Test get_or
+                let or_val = context.get_or::<i32>("nonexistent", 99).await;
+                assert_eq!(or_val, 99);
+
+                // Test update
+                context.update::<i32, _>("int_value", |v| v * 2).await?;
+                let updated_val = context.get::<i32>("int_value").await;
+                assert_eq!(updated_val, Some(84));
+
+                // Test update_or_insert
+                context.update_or_insert("new_counter", 10, |v| v + 5).await;
+                let new_counter = context.get::<i32>("new_counter").await;
+                assert_eq!(new_counter, Some(15));
+
+                // Test contains_key
+                assert!(context.contains_key("string_value").await);
+                assert!(!context.contains_key("nonexistent").await);
+
+                // Test with_write for batch operations
+                context
+                    .with_write(|ctx| {
+                        ctx.set("batch_1", "value1".to_string());
+                        ctx.set("batch_2", 100i32);
+                        ctx.set("batch_3", false);
+                    })
+                    .await;
+
+                // Test with_read for batch reading
+                let (b1, b2, b3) = context
+                    .with_read(|ctx| {
+                        let b1 = ctx.get::<String>("batch_1").cloned();
+                        let b2 = ctx.get::<i32>("batch_2").copied();
+                        let b3 = ctx.get::<bool>("batch_3").copied();
+                        (b1, b2, b3)
+                    })
+                    .await;
+
+                assert_eq!(b1, Some("value1".to_string()));
+                assert_eq!(b2, Some(100));
+                assert_eq!(b3, Some(false));
+
+                // Test keys
+                let keys = context.keys().await;
+                assert!(keys.contains(&"string_value".to_string()));
+                assert!(keys.contains(&"int_value".to_string()));
+                assert!(keys.contains(&"batch_1".to_string()));
+
+                // Test remove
+                let removed = context.remove::<String>("string_value").await;
+                assert_eq!(removed, Some("hello world".to_string()));
+                assert!(!context.contains_key("string_value").await);
+
+                Ok(())
+            }
+        }
+
+        let mut graph = TaskGraph::new();
+        graph.add_task(SimplifiedApiTask);
+
+        // Execute the task
+        graph.execute().await.unwrap();
+
+        // Verify final state using simplified API
+        let context = graph.context();
+        assert_eq!(context.get::<i32>("int_value").await, Some(84));
+        assert_eq!(context.get::<i32>("new_counter").await, Some(15));
+        assert_eq!(
+            context.get::<String>("batch_1").await,
+            Some("value1".to_string())
+        );
+        assert!(!context.contains_key("string_value").await); // Was removed
+    }
 }
