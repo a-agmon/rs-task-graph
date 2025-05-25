@@ -1,6 +1,6 @@
 //! Basic usage example of the task-graph library
 
-use task_graph::{Task, TaskGraph, Context, Condition, ExtendedContext};
+use task_graph::{Task, TaskGraph, Context, Condition, ExtendedContext, GraphError};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ struct CheckStoreTask;
 
 #[async_trait::async_trait]
 impl Task for IncrementTask {
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(&self, context: Context) -> Result<(), GraphError> {
         let mut ctx = context.write().await;
         // Get current counter value
         let current = ctx.get::<i32>("counter").copied().unwrap_or(0);
@@ -38,7 +38,7 @@ impl Task for IncrementTask {
 
 #[async_trait::async_trait]
 impl Task for MultiplyTask {
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(&self, context: Context) -> Result<(), GraphError> {
         let mut ctx = context.write().await;
         // Get current counter value
         let current = ctx.get::<i32>("counter").copied().unwrap_or(0);
@@ -56,7 +56,7 @@ impl Task for MultiplyTask {
 
 #[async_trait::async_trait]
 impl Task for PrintTask {
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(&self, context: Context) -> Result<(), GraphError> {
         let ctx = context.read().await;
         let value = ctx.get::<i32>("counter").copied().unwrap_or(0);
         println!("PrintTask: Final value is {}", value);
@@ -79,7 +79,7 @@ impl Task for PrintTask {
 
 #[async_trait::async_trait]
 impl Task for StoreResultTask {
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(&self, context: Context) -> Result<(), GraphError> {
         let mut ctx = context.write().await;
         let value = ctx.get::<i32>("counter").copied().unwrap_or(0);
         ctx.set("final_result", value);
@@ -92,7 +92,7 @@ impl Task for StoreResultTask {
 
 #[async_trait::async_trait]
 impl Task for CheckStoreTask {
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(&self, context: Context) -> Result<(), GraphError> {
         let ctx = context.read().await;
         
         println!("CheckStoreTask: Checking stored values...");

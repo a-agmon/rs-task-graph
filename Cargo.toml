@@ -8,6 +8,24 @@ tokio = { version = "1.0", features = ["full"] }
 futures = "0.3"
 thiserror = "2.0.12"
 async-trait = "0.1"
+rand = "0.9.1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Optional dependencies for examples
+axum = { version = "0.8.4", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
+axum-test = "17.3.0"
+
+[features]
+axum-example = ["axum", "serde", "serde_json", "chrono"]
+
+[[example]]
+name = "axum_service"
+path = "examples/axum_service.rs"
+required-features = ["axum-example"]

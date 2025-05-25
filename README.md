@@ -25,6 +25,21 @@ tokio = { version = "1.0", features = ["full"] }
 async-trait = "0.1"
 ```
 
+### Optional Features
+
+For web service examples using Axum:
+
+```toml
+[dependencies]
+task-graph = { version = "0.1.0", features = ["axum-example"] }
+```
+
+The `axum-example` feature includes:
+- `axum` - Web framework
+- `serde` - Serialization/deserialization
+- `serde_json` - JSON support
+- `chrono` - Date/time handling
+
 ## Quick Start
 
 ```rust
@@ -293,6 +308,12 @@ Run the advanced conditional execution example:
 cargo run --example advanced_conditional
 ```
 
+Run the Axum web service example (requires the `axum-example` feature):
+
+```bash
+cargo run --example axum_service --features axum-example
+```
+
 ### Advanced Example Features
 
 The `advanced_conditional` example demonstrates:
@@ -316,6 +337,65 @@ This demonstrates how the library can handle complex real-world workflows with b
 ```bash
 cargo test
 ```
+
+## Context Management Best Practices
+
+When working with the shared context, follow these patterns for optimal performance and correctness:
+
+### ✅ Quick Read Operations
+For reading single values, use scoped access to minimize lock duration:
+```rust
+let data_size = {
+    let ctx = context.read().await;
+    ctx.get::<usize>("data_size").copied().unwrap_or(0)
+};
+```
+
+### ✅ Grouped Write Operations
+When setting multiple related values, group them in a single scope:
+```rust
+{
+    let mut ctx = context.write().await;
+    ctx.set("processed_items", items);
+    ctx.set("processing_time_ms", time_ms);
+    ctx.set("task_completed", true);
+}
+```
+
+### ✅ Explicit Lock Release
+For long-running computations, explicitly release locks before heavy work:
+```rust
+let ctx = context.read().await;
+let values = /* read what you need */;
+drop(ctx); // Release lock before computation
+
+// Heavy computation here
+sleep(Duration::from_millis(300)).await;
+
+// Acquire lock again for writes if needed
+{
+    let mut ctx = context.write().await;
+    ctx.set("result", computed_value);
+}
+```
+
+### ❌ Anti-Patterns to Avoid
+```rust
+// Bad: Holding lock during async operations
+let mut ctx = context.write().await;
+ctx.set("start", true);
+sleep(Duration::from_millis(1000)).await; // Lock held during sleep!
+ctx.set("end", true);
+
+// Bad: Multiple separate acquisitions for related data
+let mut ctx1 = context.write().await;
+ctx1.set("value1", x);
+drop(ctx1);
+let mut ctx2 = context.write().await; // Unnecessary separate lock
+ctx2.set("value2", y);
+```
+
+**Key Principle**: Hold locks for the shortest time necessary while ensuring data consistency.
 
 ## Safety and Concurrency
 

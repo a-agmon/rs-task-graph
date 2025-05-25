@@ -5,7 +5,7 @@
 //! - Context sharing between tasks
 //! - Real-world scenario simulation
 
-use task_graph::{Task, TaskGraph, Context, Condition, ExtendedContext};
+use task_graph::{Task, TaskGraph, Context, Condition, ExtendedContext, GraphError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
@@ -45,7 +45,7 @@ struct MonitoringTask {
 
 #[async_trait::async_trait]
 impl Task for DataProcessingTask {
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(&self, context: Context) -> Result<(), GraphError> {
         let start_time = Instant::now();
         println!("🚀 Task A (DataProcessing): Starting with {} items", self.data_size);
         
@@ -74,7 +74,7 @@ impl Task for DataProcessingTask {
 
 #[async_trait::async_trait]
 impl Task for CpuProcessingTask {
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(&self, context: Context) -> Result<(), GraphError> {
         println!("🔥 Task B (CpuProcessing): Starting CPU-intensive work");
         
         // Simulate CPU-intensive work
@@ -111,7 +111,7 @@ impl Task for CpuProcessingTask {
 
 #[async_trait::async_trait]
 impl Task for IoProcessingTask {
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(&self, context: Context) -> Result<(), GraphError> {
         println!("💾 Task C (IoProcessing): Starting I/O operations");
         
         let start = Instant::now();
@@ -151,7 +151,7 @@ impl Task for IoProcessingTask {
 
 #[async_trait::async_trait]
 impl Task for AggregationTask {
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(&self, context: Context) -> Result<(), GraphError> {
         println!("📊 Task D (Aggregation): Starting final aggregation");
         
         let ctx = context.read().await;
@@ -198,7 +198,7 @@ impl Task for AggregationTask {
 
 #[async_trait::async_trait]
 impl Task for ErrorHandlingTask {
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(&self, context: Context) -> Result<(), GraphError> {
         println!("⚠️  Alternative Task (ErrorHandling): Handling processing issues");
         
         let ctx = context.read().await;
@@ -236,7 +236,7 @@ impl Task for ErrorHandlingTask {
 
 #[async_trait::async_trait]
 impl Task for MonitoringTask {
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(&self, context: Context) -> Result<(), GraphError> {
         let ctx = context.read().await;
         let start_time = ctx.get::<Instant>("processing_start_time");
         

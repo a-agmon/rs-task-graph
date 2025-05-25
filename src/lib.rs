@@ -14,7 +14,7 @@
 //! ## Example
 //! 
 //! ```rust
-//! use task_graph::{Task, TaskGraph, Context, ExtendedContext};
+//! use task_graph::{Task, TaskGraph, Context, ExtendedContext, GraphError};
 //! use std::sync::Arc;
 //! use tokio::sync::RwLock;
 //!
@@ -26,7 +26,7 @@
 //!
 //! #[async_trait::async_trait]
 //! impl Task for TaskA {
-//!     async fn run(&self, context: Arc<RwLock<ExtendedContext>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//!     async fn run(&self, context: Context) -> Result<(), GraphError> {
 //!         let mut ctx = context.write().await;
 //!         // Store data in the key-value store - any type can be stored
 //!         ctx.set("task_a_result", "completed");
@@ -37,7 +37,7 @@
 //!
 //! #[async_trait::async_trait]
 //! impl Task for TaskB {
-//!     async fn run(&self, context: Arc<RwLock<ExtendedContext>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//!     async fn run(&self, context: Context) -> Result<(), GraphError> {
 //!         let ctx = context.read().await;
 //!         // Read data from the key-value store with type safety
 //!         if let Some(result) = ctx.get::<&str>("task_a_result") {
@@ -170,7 +170,7 @@ pub type Context = Arc<RwLock<ExtendedContext>>;
 #[async_trait::async_trait]
 pub trait Task: Send + Sync + Debug {
     /// Execute the task with the given context
-    async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    async fn run(&self, context: Context) -> Result<(), GraphError>;
     
     /// Get a unique identifier for this task
     fn id(&self) -> String {
@@ -504,7 +504,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Task for TaskA {
-        async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        async fn run(&self, context: Context) -> Result<(), GraphError> {
             let mut ctx = context.write().await;
             // Store counter value
             ctx.set("counter", 1i32);
@@ -525,7 +525,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Task for TaskB {
-        async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        async fn run(&self, context: Context) -> Result<(), GraphError> {
             let mut ctx = context.write().await;
             // Update counter
             let current = ctx.get::<i32>("counter").copied().unwrap_or(0);
@@ -551,7 +551,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Task for TaskC {
-        async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        async fn run(&self, context: Context) -> Result<(), GraphError> {
             let mut ctx = context.write().await;
             // Update counter
             let current = ctx.get::<i32>("counter").copied().unwrap_or(0);
@@ -569,7 +569,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Task for TaskD {
-        async fn run(&self, context: Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        async fn run(&self, context: Context) -> Result<(), GraphError> {
             let mut ctx = context.write().await;
             // Update counter
             let current = ctx.get::<i32>("counter").copied().unwrap_or(0);
