@@ -1,20 +1,20 @@
 //! # Task Graph
-//! 
+//!
 //! A library for executing tasks in a Directed Acyclic Graph (DAG) with parallel execution support.
-//! 
+//!
 //! ## Features
-//! 
+//!
 //! - Define tasks as traits with a single `run` method
 //! - Chain tasks with direct or conditional edges
 //! - Parallel execution when possible
 //! - Shared mutable context between tasks
 //! - Type-safe task definitions
 //! - Key-value storage in context for sharing data between tasks
-//! 
+//!
 //! ## Example
-//! 
+//!
 //! ```rust
-//! use task_graph::{Task, TaskGraph, Context, ExtendedContext, GraphError};
+//! use task_graph::{Task, TaskGraph, Context, ExtendedContext, ContextExt, GraphError};
 //! use std::sync::Arc;
 //! use tokio::sync::RwLock;
 //!
@@ -27,10 +27,9 @@
 //! #[async_trait::async_trait]
 //! impl Task for TaskA {
 //!     async fn run(&self, context: Context) -> Result<(), GraphError> {
-//!         let mut ctx = context.write().await;
-//!         // Store data in the key-value store - any type can be stored
-//!         ctx.set("task_a_result", "completed");
-//!         ctx.set("counter", 42i32);
+//!         // Simple API - no need to manually handle locks
+//!         context.set("task_a_result", "completed").await;
+//!         context.set("counter", 42i32).await;
 //!         Ok(())
 //!     }
 //! }
@@ -38,26 +37,27 @@
 //! #[async_trait::async_trait]
 //! impl Task for TaskB {
 //!     async fn run(&self, context: Context) -> Result<(), GraphError> {
-//!         let ctx = context.read().await;
-//!         // Read data from the key-value store with type safety
-//!         if let Some(result) = ctx.get::<&str>("task_a_result") {
+//!         // Simple API for reading values
+//!         if let Some(result) = context.get::<String>("task_a_result").await {
 //!             println!("Task A result: {}", result);
 //!         }
-//!         if let Some(counter) = ctx.get::<i32>("counter") {
-//!             println!("Counter value: {}", counter);
-//!         }
+//!         
+//!         // Or use get_or_default for convenience
+//!         let counter = context.get_or_default::<i32>("counter").await;
+//!         println!("Counter value: {}", counter);
+//!         
 //!         Ok(())
 //!     }
 //! }
 //! ```
 
+use futures::future::join_all;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use futures::future::join_all;
 use thiserror::Error;
+use tokio::sync::RwLock;
 
 /// Errors that can occur during graph execution
 #[derive(Error, Debug)]
@@ -166,12 +166,159 @@ impl Debug for ExtendedContext {
 /// A shared context that can be passed between tasks
 pub type Context = Arc<RwLock<ExtendedContext>>;
 
+/// Extension trait for Context that provides simplified access methods
+#[async_trait::async_trait]
+pub trait ContextExt {
+    /// Set a value in the context
+    async fn set<T: Any + Send + Sync + 'static>(&self, key: impl Into<String> + Send, value: T);
+
+    /// Get a value from the context
+    async fn get<T: Any + Send + Sync + Clone + 'static>(&self, key: &str) -> Option<T>;
+
+    /// Get a value from the context or a default if not found
+    async fn get_or_default<T: Any + Send + Sync + Clone + Default + 'static>(
+        &self,
+        key: &str,
+    ) -> T;
+
+    /// Get a value from the context or a specific default value if not found
+    async fn get_or<T: Any + Send + Sync + Clone + 'static>(&self, key: &str, default: T) -> T;
+
+    /// Remove a value from the context
+    async fn remove<T: Any + Send + Sync + 'static>(&self, key: &str) -> Option<T>;
+
+    /// Check if a key exists in the context
+    async fn contains_key(&self, key: &str) -> bool;
+
+    /// Get all keys in the context
+    async fn keys(&self) -> Vec<String>;
+
+    /// Clear all values from the context
+    async fn clear(&self);
+
+    /// Update a value in the context using a closure
+    async fn update<T, F>(&self, key: &str, updater: F) -> Result<(), GraphError>
+    where
+        T: Any + Send + Sync + Clone + 'static,
+        F: FnOnce(T) -> T + Send;
+
+    /// Update a value in the context or insert a default if it doesn't exist
+    async fn update_or_insert<T, F>(&self, key: impl Into<String> + Send, default: T, updater: F)
+    where
+        T: Any + Send + Sync + Clone + 'static,
+        F: FnOnce(T) -> T + Send;
+
+    /// Execute a closure with read access to the context
+    async fn with_read<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&ExtendedContext) -> R + Send,
+        R: Send;
+
+    /// Execute a closure with write access to the context
+    async fn with_write<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut ExtendedContext) -> R + Send,
+        R: Send;
+}
+
+#[async_trait::async_trait]
+impl ContextExt for Context {
+    async fn set<T: Any + Send + Sync + 'static>(&self, key: impl Into<String> + Send, value: T) {
+        let mut ctx = self.write().await;
+        ctx.set(key, value);
+    }
+
+    async fn get<T: Any + Send + Sync + Clone + 'static>(&self, key: &str) -> Option<T> {
+        let ctx = self.read().await;
+        ctx.get::<T>(key).cloned()
+    }
+
+    async fn get_or_default<T: Any + Send + Sync + Clone + Default + 'static>(
+        &self,
+        key: &str,
+    ) -> T {
+        self.get(key).await.unwrap_or_default()
+    }
+
+    async fn get_or<T: Any + Send + Sync + Clone + 'static>(&self, key: &str, default: T) -> T {
+        self.get(key).await.unwrap_or(default)
+    }
+
+    async fn remove<T: Any + Send + Sync + 'static>(&self, key: &str) -> Option<T> {
+        let mut ctx = self.write().await;
+        ctx.remove::<T>(key)
+    }
+
+    async fn contains_key(&self, key: &str) -> bool {
+        let ctx = self.read().await;
+        ctx.contains_key(key)
+    }
+
+    async fn keys(&self) -> Vec<String> {
+        let ctx = self.read().await;
+        ctx.keys().into_iter().map(|k| k.clone()).collect()
+    }
+
+    async fn clear(&self) {
+        let mut ctx = self.write().await;
+        ctx.clear();
+    }
+
+    async fn update<T, F>(&self, key: &str, updater: F) -> Result<(), GraphError>
+    where
+        T: Any + Send + Sync + Clone + 'static,
+        F: FnOnce(T) -> T + Send,
+    {
+        let mut ctx = self.write().await;
+        if let Some(value) = ctx.get::<T>(key).cloned() {
+            let new_value = updater(value);
+            ctx.set(key, new_value);
+            Ok(())
+        } else {
+            Err(GraphError::TaskExecutionFailed(format!(
+                "Key '{}' not found",
+                key
+            )))
+        }
+    }
+
+    async fn update_or_insert<T, F>(&self, key: impl Into<String> + Send, default: T, updater: F)
+    where
+        T: Any + Send + Sync + Clone + 'static,
+        F: FnOnce(T) -> T + Send,
+    {
+        let key = key.into();
+        let mut ctx = self.write().await;
+        let value = ctx.get::<T>(&key).cloned().unwrap_or(default);
+        let new_value = updater(value);
+        ctx.set(key, new_value);
+    }
+
+    async fn with_read<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&ExtendedContext) -> R + Send,
+        R: Send,
+    {
+        let ctx = self.read().await;
+        f(&*ctx)
+    }
+
+    async fn with_write<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut ExtendedContext) -> R + Send,
+        R: Send,
+    {
+        let mut ctx = self.write().await;
+        f(&mut *ctx)
+    }
+}
+
 /// Trait that all tasks must implement
 #[async_trait::async_trait]
 pub trait Task: Send + Sync + Debug {
     /// Execute the task with the given context
     async fn run(&self, context: Context) -> Result<(), GraphError>;
-    
+
     /// Get a unique identifier for this task
     fn id(&self) -> String {
         format!("{:?}", self)
@@ -199,7 +346,11 @@ impl Debug for Edge {
         match self {
             Edge::Direct => write!(f, "Direct"),
             Edge::Conditional { else_task, .. } => {
-                write!(f, "Conditional {{ condition: <function>, else_task: {:?} }}", else_task)
+                write!(
+                    f,
+                    "Conditional {{ condition: <function>, else_task: {:?} }}",
+                    else_task
+                )
             }
         }
     }
@@ -298,14 +449,14 @@ impl TaskGraph {
             else_task: else_id.clone(),
         };
         self.add_edge_by_id(&from_id, &to_id, edge)?;
-        
+
         // Also add dependency for the else task if it exists
         if let Some(else_id) = else_id {
             if let Some(else_node) = self.nodes.get_mut(&else_id) {
                 else_node.dependencies.insert(from_id);
             }
         }
-        
+
         Ok(self)
     }
 
@@ -408,7 +559,7 @@ impl TaskGraph {
                     let task = node.task.clone();
                     let context = self.context.clone();
                     let task_id_clone = task_id.clone();
-                    
+
                     let future = async move {
                         let result = task.run(context).await;
                         (task_id_clone, result)
@@ -419,13 +570,13 @@ impl TaskGraph {
 
             // Wait for all tasks to complete
             let results = join_all(task_futures).await;
-            
+
             for (task_id, result) in results {
                 in_progress.remove(&task_id);
                 match result {
                     Ok(_) => {
                         completed.insert(task_id.clone());
-                        
+
                         // Handle conditional edges after task completion
                         if let Some(node) = self.nodes.get(&task_id) {
                             for (dependent_id, edge) in &node.dependents {
@@ -433,12 +584,15 @@ impl TaskGraph {
                                     Edge::Direct => {
                                         // Direct edges are always followed
                                     }
-                                    Edge::Conditional { condition, else_task } => {
+                                    Edge::Conditional {
+                                        condition,
+                                        else_task,
+                                    } => {
                                         // Evaluate condition with access to the full context
                                         let ctx = self.context.read().await;
                                         let should_follow = condition(&*ctx);
                                         drop(ctx); // Release the lock
-                                        
+
                                         if !should_follow {
                                             // Block the main conditional task
                                             blocked_by_condition.insert(dependent_id.clone());
@@ -488,7 +642,6 @@ impl TaskGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[derive(Debug)]
     struct TaskA;
@@ -599,7 +752,7 @@ mod tests {
         assert_eq!(final_value, 11); // 1 + 10 = 11
         let order = ctx_guard.get::<Vec<String>>("execution_order").unwrap();
         assert_eq!(order, &vec!["A", "B"]);
-        
+
         // Check key-value store
         assert_eq!(ctx_guard.get::<bool>("task_a_completed"), Some(&true));
         assert_eq!(ctx_guard.get::<bool>("task_b_saw_a"), Some(&true));
@@ -636,7 +789,9 @@ mod tests {
         });
 
         graph.add_edge(TaskA, TaskB).unwrap();
-        graph.add_cond_edge(TaskB, TaskC, condition, Some(TaskD)).unwrap();
+        graph
+            .add_cond_edge(TaskB, TaskC, condition, Some(TaskD))
+            .unwrap();
 
         graph.execute().await.unwrap();
 
@@ -654,12 +809,13 @@ mod tests {
         let mut graph = TaskGraph::new();
 
         // Condition that checks the key-value store
-        let condition: Condition = Arc::new(|context: &ExtendedContext| {
-            context.get::<bool>("task_a_completed").is_some()
-        });
+        let condition: Condition =
+            Arc::new(|context: &ExtendedContext| context.get::<bool>("task_a_completed").is_some());
 
         graph.add_edge(TaskA, TaskB).unwrap();
-        graph.add_cond_edge(TaskB, TaskC, condition, Some(TaskD)).unwrap();
+        graph
+            .add_cond_edge(TaskB, TaskC, condition, Some(TaskD))
+            .unwrap();
 
         graph.execute().await.unwrap();
 
@@ -667,7 +823,7 @@ mod tests {
         let ctx = graph.context();
         let ctx_guard = ctx.read().await;
         assert_eq!(ctx_guard.get::<bool>("task_b_saw_a"), Some(&true));
-        
+
         // Since task A stores "task_a_completed" = true, the condition should be true
         // So TaskC should run, not TaskD
         assert_eq!(ctx_guard.get::<bool>("task_c_completed"), Some(&true));
@@ -682,7 +838,7 @@ mod tests {
         graph.add_edge(TaskA, TaskB).unwrap();
         graph.add_edge(TaskB, TaskC).unwrap();
         let result = graph.add_edge(TaskC, TaskA);
-        
+
         assert!(matches!(result, Err(GraphError::CycleDetected)));
     }
 }

@@ -29,3 +29,7 @@ axum-example = ["axum", "serde", "serde_json", "chrono"]
 name = "axum_service"
 path = "examples/axum_service.rs"
 required-features = ["axum-example"]
+
+[[example]]
+name = "simple_api"
+path = "examples/simple_api.rs"
